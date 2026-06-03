@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>Quantum Sands - Primitive Vine Bag Edition</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background:#1e3a5f;
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  height:100vh; overflow:hidden;
+  font-family:'Segoe UI', Arial, sans-serif;
+}
+canvas {
+  display:block;
+  width:100vw; height:100vh;
+  object-fit:contain;
+  image-rendering:pixelated;
+}
+#hud {
+  position:absolute; top:14px; left:50%; transform:translateX(-50%);
+  color:#fff; font-size:13px; background:rgba(0,0,0,0.55);
+  padding:6px 18px; border-radius:20px; white-space:nowrap;
+  user-select:none; pointer-events:none;
+}
+#seed-input-box {
+  position:absolute; bottom:20px; left:50%; transform:translateX(-50%);
+  background:rgba(0,0,0,0.7); border-radius:12px;
+  padding:10px 18px; display:flex; gap:10px; align-items:center;
+}
+#seed-input-box input {
+  background:rgba(255,255,255,0.15); border:1px solid rgba(255,255,255,0.4);
+  color:#fff; font-family:monospace; font-size:14px; font-weight:bold;
+  padding:4px 10px; border-radius:8px; width:110px; text-transform:uppercase;
+  letter-spacing:2px; text-align:center;
+}
+#seed-input-box button {
+  background:#3b82f6; color:#fff; border:none; border-radius:8px;
+  font-size:12px; padding:5px 12px; cursor:pointer;
+}
+#legend {
+  position:absolute; bottom:20px; left:160px;
+  background:rgba(10,25,50,0.82);
+  border-radius:10px; padding:10px 14px;
+  border:1px solid rgba(255,255,255,0.10);
+  user-select:none; pointer-events:none;
+}
+#legend .leg-item {
+  display:flex; align-items:center; gap:8px;
+  margin:3px 0; font-size:12px; color:#e8eef5;
+}
+#legend .leg-swatch {
+  width:14px; height:14px; border-radius:2px; flex-shrink:0;
+  border:1px solid rgba(255,255,255,0.25);
+}
+#transition-modal {
+  display: none;
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  background: rgba(10, 25, 50, 0.95);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  padding: 25px 40px;
+  border-radius: 12px;
+  text-align: center;
+  color: #fff;
+  z-index: 100;
+}
+.modal-btn-container { display: flex; gap: 15px; justify-content: center; }
+.modal-btn {
+  background: #3b82f6; color: #fff; border: none; border-radius: 8px;
+  font-size: 14px; padding: 8px 20px; cursor: pointer; font-weight: bold;
+}
+</style>
+</head>
+<body>
+<div id="hud">🎮 WASD 移動 | 發現海邊雜亂綑綁的簡陋藤蔓求生物資包</div>
+<canvas id="gameCanvas"></canvas>
+
+<div id="legend">
+  <div class="leg-item"><div class="leg-swatch" style="background:#0b2f52"></div>深層海</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#38bdf8"></div>淺層海</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#f5dfa0"></div>沙灘</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#5cd67a"></div>草地</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#c8cdd4"></div>石地</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#543d2b"></div>簡陋求生包</div>
+</div>
+
+<div id="seed-input-box">
+  <label style="color:#fff; font-size:12px;">輸入種子碼:</label>
+  <input id="seed-input" maxlength="5" placeholder="XXXXX" />
+  <button onclick="applySeed()">套用</button>
+  <button onclick="randomSeed()">隨機</button>
+</div>
+
+<div id="transition-modal">
+  <p>是否穿越至下張地圖？</p>
+  <div class="modal-btn-container">
+    <button id="btn-yes" class="modal-btn">是</button>
+    <button id="btn-no" class="modal-btn" style="background:#64748b;">暫時不要</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width  = 1280;
+canvas.height = 720;
+
+// 玩家設定
+const playerSprite = new Image();
+playerSprite.src = 'savage.png';
+let SPRITE_FRAME_W = 0, SPRITE_FRAME_H = 0;
+playerSprite.onload = () => {
+  SPRITE_FRAME_W = playerSprite.naturalWidth  / 4;
+  SPRITE_FRAME_H = playerSprite.naturalHeight / 4;
+};
+
+const ROWS = 18, COLS = 20;
+const TW = 56, TH = 28, HW = TW/2, HH = TH/2;
+const ELEV = { '-1':10, '0':10, '1':10, '2':20, '3':30 };
+
+// 物品定義
+const ITEMS = {
+  bag: { gx: -1, gy: -1 }
+};
+
+const COLOR = {
+  '-1': { top:'#0b2f52', left:'#061c33', right:'#092540' },
+   '0': { top:'#38bdf8', left:'#0369a1', right:'#0284c7' },
+   '1': { top:'#f5dfa0', left:'#b5935a', right:'#d4aa6a' },
+   '2': { top:'#5cd67a', left:'#1a7a35', right:'#22a048' },
+   '3': { top:'#c8cdd4', left:'#5a6070', right:'#8a909a' },
+};
+
+let MAP = [];
+let currentSeed = '';
+
+function seedFromString(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = Math.imul(31,h) + str.charCodeAt(i) | 0;
+  return h >>> 0;
+}
+function makePRNG(seed) {
+  let s = seed;
+  return () => {
+    s |= 0; s = s + 0x6D2B79F5 | 0;
+    let t = Math.imul(s ^ s>>>15, 1|s);
+    t = t + Math.imul(t ^ t>>>7, 61|t) ^ t;
+    return ((t ^ t>>>14) >>> 0) / 4294967296;
+  };
+}
+function smoothstep(t) { return t*t*(3-2*t); }
+function lerp(a,b,t)   { return a+(b-a)*t; }
+function buildNoise2D(rng, size) {
+  const g = Array.from({length:size}, ()=>Array.from({length:size}, ()=>rng()*2-1));
+  return (x,y) => {
+    const xi=Math.floor(x)%size, yi=Math.floor(y)%size;
+    const xf=x-Math.floor(x),   yf=y-Math.floor(y);
+    const xi1=(xi+1)%size, yi1=(yi+1)%size;
+    return lerp(lerp(g[yi][xi], g[yi][xi1], smoothstep(xf)), lerp(g[yi1][xi],g[yi1][xi1],smoothstep(xf)), smoothstep(yf));
+  };
+}
+
+function generateMap(seedStr) {
+  const n1=buildNoise2D(makePRNG(seedFromString(seedStr+'A')),16);
+  const n2=buildNoise2D(makePRNG(seedFromString(seedStr+'B')),8);
+  const n3=buildNoise2D(makePRNG(seedFromString(seedStr+'C')),32);
+  return Array.from({length:ROWS},(_,gy)=>
+    Array.from({length:COLS},(_,gx)=>{
+      const grad=(gx-gy)/(COLS+ROWS);
+      const n=n1(gx*.18,gy*.18)*.55 + n2(gx*.35,gy*.35)*.25 + n3(gx*.08,gy*.08)*.20;
+      const h=grad*1.8+n*0.7;
+      return h<-0.65?-1:h<-0.20?0:h<0.20?1:h<0.70?2:3;
+    }));
+}
+
+function applySeedStr(seedStr) {
+  seedStr=seedStr.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,5).padEnd(5,'0');
+  currentSeed=seedStr;
+  document.getElementById('seed-input').value=seedStr;
+  MAP=generateMap(seedStr);
+  
+  ITEMS.bag.gx = -1;
+  const rng = makePRNG(seedFromString(seedStr + "ITEM"));
+  for(let i=0; i<100; i++){
+    let rx = Math.floor(rng() * COLS), ry = Math.floor(rng() * ROWS);
+    if(MAP[ry][rx] === 1 || MAP[ry][rx] === 2){ // 沙灘或草地
+       ITEMS.bag.gx = rx; ITEMS.bag.gy = ry; break;
+    }
+  }
+
+  let sx=Math.floor(COLS*.55), sy=Math.floor(ROWS*.45);
+  player.gx=sx; player.gy=sy; player.tx=sx; player.ty=sy;
+}
+
+function randomSeed() { applySeedStr(Array.from({length:5},()=>'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'[Math.floor(Math.random()*36)]).join('')); }
+function applySeed()  { applySeedStr(document.getElementById('seed-input').value); }
+function tileAt(gx,gy) { return (gx<0||gy<0||gx>=COLS||gy>=ROWS) ? -2 : MAP[gy][gx]; }
+
+function toScreen(fx,fy,type) {
+  const ez=ELEV[String(type)]??0;
+  const ox = canvas.width / 2.1, oy = Math.floor((canvas.height - (COLS + ROWS) * HH) / 2) + 45;
+  return { x:ox+(fx-fy)*HW, y:oy+(fx+fy)*HH-ez };
+}
+
+// 繪製【粗糙、手工隨性、漏洞百出】的生存藤蔓網袋
+function drawBag(gx, gy) {
+  const type = tileAt(gx, gy);
+  const p = toScreen(gx, gy, type);
+  
+  ctx.save();
+  ctx.lineJoin = 'miter';
+  ctx.lineCap = 'round';
+
+  // 1. 裡面塞的凌亂柴火/求生物資（先畫，當作背景襯托出網袋漏空）
+  ctx.strokeStyle = '#8a7355'; // 枯木色
+  ctx.lineWidth = 3;
+  // 橫插出來的碎木頭一號
+  ctx.beginPath(); ctx.moveTo(p.x - 12, p.y - 4); ctx.lineTo(p.x + 15, p.y - 2); ctx.stroke();
+  // 斜插的碎木頭二號
+  ctx.strokeStyle = '#735d43';
+  ctx.beginPath(); ctx.moveTo(p.x + 4, p.y - 12); ctx.lineTo(p.x - 8, p.y + 4); ctx.stroke();
+
+  // 2. 隨手扯來、歪歪扭扭的粗藤蔓提把（左邊長右邊短，極度不對稱）
+  ctx.strokeStyle = '#423124'; // 深藤蔓色
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(p.x - 7, p.y - 10);
+  // 用折線代替平滑曲線，表現出樹枝的硬脆與結頭
+  ctx.lineTo(p.x - 11, p.y - 22);
+  ctx.lineTo(p.x - 6, p.y - 34);
+  ctx.lineTo(p.x + 2, p.y - 32);
+  ctx.lineTo(p.x + 8, p.y - 20);
+  ctx.lineTo(p.x + 5, p.y - 10);
+  ctx.stroke();
+
+  // 在提把交界處畫個粗糙的結頭
+  ctx.fillStyle = '#2b1f16';
+  ctx.beginPath(); ctx.arc(p.x - 7, p.y - 12, 3, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(p.x + 6, p.y - 11, 2.5, 0, Math.PI*2); ctx.fill();
+
+  // 3. 粗糙的藤蔓編織網體（不採用實心填色，全用凌亂的粗線交織，帶有破洞感）
+  ctx.strokeStyle = '#543d2b';
+  ctx.lineWidth = 2;
+
+  // 外圍隨便繞一圈的大輪廓
+  ctx.beginPath();
+  ctx.moveTo(p.x - 11, p.y - 12); ctx.lineTo(p.x + 9, p.y - 11);
+  ctx.lineTo(p.x + 6, p.y + 4);   ctx.lineTo(p.x - 9, p.y + 3);
+  ctx.closePath();
+  ctx.stroke();
+
+  // 橫向亂綁的藤蔓線（故意長短不一、歪斜）
+  ctx.beginPath();
+  ctx.moveTo(p.x - 10, p.y - 8);  ctx.lineTo(p.x + 8, p.y - 7);
+  ctx.moveTo(p.x - 9, p.y - 2);   ctx.lineTo(p.x + 7, p.y - 3);
+  ctx.moveTo(p.x - 8, p.y + 2);   ctx.lineTo(p.x + 5, p.y + 1);
+  ctx.stroke();
+
+  // 縱向胡亂拉扯的編織線（間距不均勻、露出裡面的柴火）
+  ctx.beginPath();
+  ctx.moveTo(p.x - 7, p.y - 12);  ctx.lineTo(p.x - 6, p.y + 3);
+  ctx.moveTo(p.x - 2, p.y - 12);  ctx.lineTo(p.x - 1, p.y + 4);
+  ctx.moveTo(p.x + 3, p.y - 11);  ctx.lineTo(p.x + 2, p.y + 2);
+  ctx.stroke();
+
+  // 4. 追加幾條胡亂纏繞的死結加固線
+  ctx.strokeStyle = '#3d2b1f';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(p.x - 12, p.y - 6);  ctx.lineTo(p.x + 4, p.y + 2);
+  ctx.moveTo(p.x - 5, p.y - 10);  ctx.lineTo(p.x - 9, p.y);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawTile(gx,gy) {
+  const type=tileAt(gx,gy);
+  if (type===-2) return;
+  const c=COLOR[String(type)];
+  const p=toScreen(gx,gy,type);
+  const thick = 1 + (ELEV[String(type)] ?? 0);
+
+  ctx.fillStyle=c.top;
+  ctx.beginPath();
+  ctx.moveTo(p.x, p.y-HH); ctx.lineTo(p.x+HW, p.y); ctx.lineTo(p.x, p.y+HH); ctx.lineTo(p.x-HW, p.y);
+  ctx.closePath(); ctx.fill();
+
+  ctx.fillStyle=c.left;
+  ctx.beginPath();
+  ctx.moveTo(p.x-HW, p.y); ctx.lineTo(p.x, p.y+HH); ctx.lineTo(p.x, p.y+HH+thick); ctx.lineTo(p.x-HW, p.y+thick);
+  ctx.closePath(); ctx.fill();
+
+  ctx.fillStyle=c.right;
+  ctx.beginPath();
+  ctx.moveTo(p.x+HW, p.y); ctx.lineTo(p.x, p.y+HH); ctx.lineTo(p.x, p.y+HH+thick); ctx.lineTo(p.x+HW, p.y+thick);
+  ctx.closePath(); ctx.fill();
+}
+
+function drawPlayer(gx,gy,frame) {
+  const rGx=Math.round(gx), rGy=Math.round(gy);
+  const type=tileAt(rGx,rGy);
+  const p=toScreen(gx,gy,type);
+  const isMoving=Math.abs(player.tx-player.gx)>0.01||Math.abs(player.ty-player.gy)>0.01;
+  const bob=isMoving?Math.sin(frame*.18)*2.5:0;
+
+  ctx.save(); ctx.globalAlpha=0.22; ctx.fillStyle='#000';
+  ctx.beginPath(); ctx.ellipse(p.x,p.y,14,5,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  if (!playerSprite.complete || SPRITE_FRAME_W===0) return;
+  const fi=isMoving?Math.floor(frame/6)%4:0;
+  const dh=80, dw=(SPRITE_FRAME_W/SPRITE_FRAME_H)*dh;
+  const drawX=p.x-dw/2, drawY=p.y-bob-dh+10;
+
+  if (type <= 0) {
+    const waterY = p.y - 0.2 + (type === -1 ? -5 : 0);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, canvas.width, waterY); ctx.clip();
+    ctx.imageSmoothingEnabled=false;
+    ctx.drawImage(playerSprite, fi*SPRITE_FRAME_W, player.dir*SPRITE_FRAME_H, SPRITE_FRAME_W, SPRITE_FRAME_H, drawX, drawY+(type===-1?40:10), dw, dh);
+    ctx.restore();
+  } else {
+    ctx.imageSmoothingEnabled=false;
+    ctx.drawImage(playerSprite, fi*SPRITE_FRAME_W, player.dir*SPRITE_FRAME_H, SPRITE_FRAME_W, SPRITE_FRAME_H, drawX, drawY, dw, dh);
+  }
+}
+
+const player={gx:0,gy:0,tx:0,ty:0,frame:0,dir:1};
+const held=new Set();
+window.addEventListener('keydown',e=>{ held.add(e.key); });
+window.addEventListener('keyup',e=>held.delete(e.key));
+
+let prompting = false;
+
+function update() {
+  player.gx+=(player.tx-player.gx)*0.28;
+  player.gy+=(player.ty-player.gy)*0.28;
+  
+  if (!prompting && Math.abs(player.tx-player.gx)<0.1) {
+    let dx=0,dy=0;
+    if (held.has('ArrowUp')||held.has('w')) {dx=-1;player.dir=3;}
+    else if (held.has('ArrowDown')||held.has('s')) {dx=1;player.dir=1;}
+    else if (held.has('ArrowLeft')||held.has('a')) {dy=1;player.dir=2;}
+    else if (held.has('ArrowRight')||held.has('d')) {dy=-1;player.dir=0;}
+    
+    if (dx!==0||dy!==0) {
+      let nx = player.tx + dx, ny = player.ty + dy;
+      if (nx>=0 && ny>=0 && nx<COLS && ny<ROWS) { player.tx=nx; player.ty=ny; }
+    }
+  }
+  player.frame++;
+}
+
+function render() {
+  const sg=ctx.createLinearGradient(0,0,0,canvas.height);
+  sg.addColorStop(0,'#0f2744'); sg.addColorStop(1,'#2e6080');
+  ctx.fillStyle=sg; ctx.fillRect(0,0,canvas.width,canvas.height);
+  
+  for (let s=0; s<ROWS+COLS-1; s++) {
+    for (let gx=0; gx<COLS; gx++) {
+      const gy=s-gx;
+      if (gy>=0 && gy<ROWS) {
+        drawTile(gx,gy);
+        // 繪製簡陋求生包
+        if (ITEMS.bag.gx === gx && ITEMS.bag.gy === gy) drawBag(gx, gy);
+        // 繪製玩家
+        if (Math.round(player.gx) === gx && Math.round(player.gy) === gy) drawPlayer(player.gx, player.gy, player.frame);
+      }
+    }
+  }
+}
+
+randomSeed();
+(function loop(){ update(); render(); requestAnimationFrame(loop); })();
+</script>
+</body>
+</html>
